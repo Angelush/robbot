@@ -149,4 +149,14 @@ This bot is powered by the [Robert Murray-Smith Fan Archive](https://github.com/
 
 ---
 
+## License
+
+[![CC BY-SA 4.0](https://img.shields.io/badge/License-CC%20BY--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-sa/4.0/)
+
+This project is licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+Robert's original content retains its original licenses (CC BY 4.0 for 3D models, YouTube standard for videos).
+See [LICENSE](LICENSE) for details.
+
+---
+
 *Built with love by fans, for fans.*
