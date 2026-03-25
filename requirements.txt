@@ -1,0 +1,5 @@
+discord.py>=2.3
+chromadb>=0.4
+sentence-transformers>=2.2
+httpx>=0.25
+python-dotenv>=1.0
