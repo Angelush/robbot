@@ -184,9 +184,11 @@ def build_messages(question: str, context_docs: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def get_random_video() -> dict | None:
-    """Return a random video from the compact index."""
+    """Return a random YouTube video from the compact index."""
     import random
     if not _compact_index:
         return None
-    vid_id = random.choice(list(_compact_index.keys()))
-    return _compact_index[vid_id]
+    yt_items = [v for v in _compact_index.values() if v.get("type") == "yt"]
+    if not yt_items:
+        return None
+    return random.choice(yt_items)

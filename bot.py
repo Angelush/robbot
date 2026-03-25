@@ -167,27 +167,34 @@ async def search(interaction: discord.Interaction, topic: str):
 
 @bot.tree.command(name="random", description="Get a random video recommendation from Rob's archive")
 async def random_video(interaction: discord.Interaction):
-    video = rag.get_random_video()
-    if not video:
+    try:
+        video = rag.get_random_video()
+        if not video:
+            await interaction.response.send_message(
+                "Hmm, my index seems empty. Something's not right! \U0001F914",
+                ephemeral=True,
+            )
+            return
+
+        title = video.get("t", "Untitled")
+        vid_id = video.get("id", "")
+        date = video.get("d", "")[:10]
+        url = video.get("url", f"https://www.youtube.com/watch?v={vid_id}")
+        topics = ", ".join(video.get("topics", [])[:5]) if video.get("topics") else "general science"
+
         await interaction.response.send_message(
-            "Hmm, my index seems empty. Something's not right! \U0001F914",
+            f"\U0001F3B2 **Here's a random pick from Rob's archive!**\n\n"
+            f"> **{title}** ({date})\n"
+            f"> Topics: {topics}\n"
+            f"> {url}\n\n"
+            f"-# RobBot | Fan-made tribute bot"
+        )
+    except Exception as e:
+        log.error(f"Error in /random: {e}", exc_info=True)
+        await interaction.response.send_message(
+            "Oops, something went wrong picking a video! \U0001F527 Try again.",
             ephemeral=True,
         )
-        return
-
-    title = video.get("t", "Untitled")
-    vid_id = video.get("id", "")
-    date = video.get("d", "")[:10]
-    url = video.get("url", f"https://www.youtube.com/watch?v={vid_id}")
-    topics = ", ".join(video.get("topics", [])[:5]) if video.get("topics") else "general science"
-
-    await interaction.response.send_message(
-        f"\U0001F3B2 **Here's a random pick from Rob's archive!**\n\n"
-        f"> **{title}** ({date})\n"
-        f"> Topics: {topics}\n"
-        f"> {url}\n\n"
-        f"-# RobBot | Fan-made tribute bot"
-    )
 
 # ---------------------------------------------------------------------------
 # /3d — search Thingiverse designs
@@ -259,23 +266,33 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
 
-    # Process commands first
-    await bot.process_commands(message)
+    # Let prefix commands process — but don't double-handle
+    ctx = await bot.get_context(message)
+    if ctx.valid:
+        await bot.process_commands(message)
+        return
 
-    # Respond to @mentions and DMs
+    # Respond to @mentions and DMs only
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mention = bot.user in message.mentions if bot.user else False
 
     if not is_dm and not is_mention:
         return
 
-    # Strip the mention from the message
+    # Strip the mention and punctuation-only leftovers from the message
     question = message.content
     if bot.user:
         question = question.replace(f"<@{bot.user.id}>", "").strip()
         question = question.replace(f"<@!{bot.user.id}>", "").strip()
 
-    if not question:
+    # Detect greetings and near-empty messages
+    import re
+    cleaned = re.sub(r"[^\w\s]", "", question).lower().strip()
+    GREETINGS = {"hey", "hi", "hello", "howdy", "sup", "yo", "hola", "oi", "hiya",
+                 "greetings", "cheers", "heya", "cheers mate", "hey mate", "hi mate",
+                 "hello mate", "whats up", "wassup", "good morning", "good evening",
+                 "good afternoon", "morning", "evening", "afternoon"}
+    if not cleaned or cleaned in GREETINGS:
         await message.reply(
             "Hey mate! \U0001F44B Ask me anything about Rob's experiments, "
             "or try `/search graphene` to find specific videos. Cheers!"
