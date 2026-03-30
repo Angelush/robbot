@@ -51,10 +51,20 @@ Also responds to **@mentions** and **DMs**.
 2. Create an account
 3. Go to API Keys and create one
 
-### 3. Install & Configure
+### 3. Clone the Archive Repo
+
+The bot reads from the [Robert Murray-Smith Fan Archive](https://github.com/Angelush/robert-murray-smith-archive). Clone it somewhere on your machine:
 
 ```bash
-# Clone the repo
+git clone https://github.com/Angelush/robert-murray-smith-archive.git
+```
+
+Note the path — you'll need it for the `.env` file.
+
+### 4. Install & Configure
+
+```bash
+# Clone the bot repo
 git clone https://github.com/Angelush/robbot.git
 cd robbot
 
@@ -63,20 +73,31 @@ pip install -r requirements.txt
 
 # Configure
 cp .env.example .env
-# Edit .env with your Discord token and API keys
+# Edit .env — set your Discord token, API keys, and ARCHIVE_PATH
 ```
 
-### 4. Build the Vector Database
+Your `.env` should include:
 
-This embeds all 2,200+ video summaries into ChromaDB for semantic search. Run once:
+```
+DISCORD_TOKEN=your_discord_token
+MISTRAL_API_KEY=your_mistral_key
+GROQ_API_KEY=your_groq_key
+ARCHIVE_PATH=/path/to/robert-murray-smith-archive
+```
+
+### 5. Build the Vector Database (Optional)
+
+For semantic search (`/ask` command), build the ChromaDB index from the archive. This step runs from **the archive repo**, not the bot repo:
 
 ```bash
-python build_vectordb.py --archive-path "/path/to/robert-murray-smith-archive"
+cd /path/to/robert-murray-smith-archive
+pip install chromadb sentence-transformers
+python build_vectordb.py
 ```
 
-This creates `chroma_db/` (~100 MB) and copies index files to `data/`.
+This creates `chroma_db/` (~100 MB) inside the archive directory. The bot reads it from `ARCHIVE_PATH/chroma_db/`.
 
-### 5. Run the Bot
+### 6. Run the Bot
 
 ```bash
 python bot.py
@@ -89,17 +110,22 @@ python bot.py
 The bot runs comfortably on Oracle Cloud's free ARM instance (24GB RAM, 4 vCPU):
 
 ```bash
-# On your local machine: build the vector DB first
+# Clone both repos on the server
+git clone https://github.com/Angelush/robert-murray-smith-archive.git /app/archive
+git clone https://github.com/Angelush/robbot.git /app/robbot
+
+# Build the vector DB on the server (or transfer chroma_db/ from local)
+cd /app/archive
+pip install chromadb sentence-transformers
 python build_vectordb.py
 
-# Transfer to server
-rsync -avz chroma_db/ user@server:/app/robbot/chroma_db/
-rsync -avz data/ user@server:/app/robbot/data/
-rsync -avz *.py requirements.txt .env Dockerfile user@server:/app/robbot/
-
-# On the server
+# Configure the bot
 cd /app/robbot
 pip install -r requirements.txt
+cp .env.example .env
+# Edit .env — set ARCHIVE_PATH=/app/archive and your API keys
+
+# Run
 python bot.py
 
 # Or with Docker
