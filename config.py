@@ -9,8 +9,6 @@ load_dotenv()
 
 # Paths
 BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
-CHROMA_DIR = BASE_DIR / "chroma_db"
 ARCHIVE_PATH = Path(os.getenv("ARCHIVE_PATH", r"C:\Users\Angelus\My Drive\IA\Rob"))
 
 # Discord

@@ -6,7 +6,8 @@ Usage:
 """
 import asyncio
 import logging
-import random
+import re
+import sys
 import time
 from collections import defaultdict
 
@@ -15,8 +16,8 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-import rag
 from llm import router as llm_router
+from messages import build_messages
 from personality import (
     is_grief_message,
     is_prompt_injection,
@@ -26,6 +27,10 @@ from personality import (
     get_off_topic_response,
     format_response,
 )
+
+# Add archive repo to Python path so we can import archive_search
+sys.path.insert(0, str(config.ARCHIVE_PATH))
+from archive_search import ArchiveSearch
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -48,6 +53,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Per-user cooldown tracker
 _user_cooldowns: dict[int, float] = defaultdict(float)
+
+# Archive search instance (initialized in on_ready)
+archive: ArchiveSearch | None = None
 
 
 def check_cooldown(user_id: int) -> float | None:
@@ -94,10 +102,11 @@ async def ask(interaction: discord.Interaction, question: str):
     await interaction.response.defer()
 
     try:
-        # RAG search
-        context_docs = rag.search(question)
+        # RAG search via shared archive library
+        context_docs = await asyncio.to_thread(
+            archive.search_videos, question, config.RAG_MAX_VIDEOS
+        )
 
-        # If RAG returns nothing useful, it might be off-topic
         if not context_docs:
             await interaction.followup.send(
                 "Hmm, I couldn't find anything in Rob's archive about that! \U0001F914 "
@@ -107,14 +116,11 @@ async def ask(interaction: discord.Interaction, question: str):
             return
 
         # Build prompt and call LLM
-        messages = rag.build_messages(question, context_docs)
+        messages = build_messages(question, context_docs)
         answer = await llm_router.generate(messages)
 
         # Format with video links
-        videos = [
-            {"title": d["title"], "url": d["url"]}
-            for d in context_docs
-        ]
+        videos = [{"title": d.title, "url": d.url} for d in context_docs]
         formatted = format_response(answer, videos)
         await interaction.followup.send(formatted)
 
@@ -132,7 +138,7 @@ async def ask(interaction: discord.Interaction, question: str):
 @bot.tree.command(name="search", description="Search Rob's videos by topic or material")
 @app_commands.describe(topic="Topic or material to search for (e.g., graphene, batteries)")
 async def search(interaction: discord.Interaction, topic: str):
-    results = rag.search_topics(topic, limit=10)
+    results = await asyncio.to_thread(archive.search_topics, topic, 10)
 
     if not results:
         await interaction.response.send_message(
@@ -143,11 +149,10 @@ async def search(interaction: discord.Interaction, topic: str):
         return
 
     lines = [f"**Found {len(results)} video(s) about \"{topic}\":**\n"]
-    for item in results[:8]:  # Limit to 8 to stay under Discord limit
-        title = item.get("t", "Untitled")
-        vid_id = item.get("id", "")
-        date = item.get("d", "")[:10]
-        url = item.get("url", f"https://www.youtube.com/watch?v={vid_id}")
+    for item in results[:8]:
+        title = item.title
+        date = item.date[:10]
+        url = item.url
         lines.append(f"> **{title}** ({date})\n> {url}")
 
     if len(results) > 8:
@@ -168,7 +173,7 @@ async def search(interaction: discord.Interaction, topic: str):
 @bot.tree.command(name="random", description="Get a random video recommendation from Rob's archive")
 async def random_video(interaction: discord.Interaction):
     try:
-        video = rag.get_random_video()
+        video = await asyncio.to_thread(archive.get_random_video)
         if not video:
             await interaction.response.send_message(
                 "Hmm, my index seems empty. Something's not right! \U0001F914",
@@ -176,17 +181,13 @@ async def random_video(interaction: discord.Interaction):
             )
             return
 
-        title = video.get("t", "Untitled")
-        vid_id = video.get("id", "")
-        date = video.get("d", "")[:10]
-        url = video.get("url", f"https://www.youtube.com/watch?v={vid_id}")
-        topics = ", ".join(video.get("topics", [])[:5]) if video.get("topics") else "general science"
+        topics = ", ".join(video.topics[:5]) if video.topics else "general science"
 
         await interaction.response.send_message(
             f"\U0001F3B2 **Here's a random pick from Rob's archive!**\n\n"
-            f"> **{title}** ({date})\n"
+            f"> **{video.title}** ({video.date[:10]})\n"
             f"> Topics: {topics}\n"
-            f"> {url}\n\n"
+            f"> {video.url}\n\n"
             f"-# RobBot | Fan-made tribute bot"
         )
     except Exception as e:
@@ -203,11 +204,9 @@ async def random_video(interaction: discord.Interaction):
 @bot.tree.command(name="3d", description="Search Rob's 3D printable designs")
 @app_commands.describe(query="What kind of 3D design are you looking for?")
 async def search_3d(interaction: discord.Interaction, query: str):
-    # Search ChromaDB with source filter
-    results = rag.search(query, top_k=5)
-    thingiverse_results = [r for r in results if "thingiverse" in r.get("channel", "")]
+    results = await asyncio.to_thread(archive.search_3d, query, 5)
 
-    if not thingiverse_results:
+    if not results:
         await interaction.response.send_message(
             f"No 3D designs found for \"{query}\". \U0001F914 "
             f"Try broader terms like 'gear', 'motor', or 'holder'.",
@@ -215,11 +214,9 @@ async def search_3d(interaction: discord.Interaction, query: str):
         )
         return
 
-    lines = [f"**Found {len(thingiverse_results)} 3D design(s) for \"{query}\":**\n"]
-    for item in thingiverse_results:
-        title = item.get("title", "Untitled")
-        url = item.get("url", "")
-        lines.append(f"> **{title}**\n> {url}")
+    lines = [f"**Found {len(results)} 3D design(s) for \"{query}\":**\n"]
+    for item in results:
+        lines.append(f"> **{item.name}**\n> {item.url}")
 
     lines.append(
         f"\n\U0001F4E5 [Browse all STL files on MEGA]"
@@ -237,16 +234,16 @@ async def search_3d(interaction: discord.Interaction, query: str):
 async def about(interaction: discord.Interaction):
     await interaction.response.send_message(
         "**RobBot** \U0001F916\U0001F52C\n\n"
-        "A fan-made tribute bot for **Robert Murray-Smith** (1965–2025), "
+        "A fan-made tribute bot for **Robert Murray-Smith** (1965\u20132025), "
         "a brilliant inventor, educator, and YouTuber from Scotland.\n\n"
         "Robert made over 2,400 videos about graphene, batteries, supercapacitors, "
         "solar cells, 3D printing, and countless DIY science experiments. "
         "His curiosity and generosity in sharing knowledge inspired thousands.\n\n"
         "**This bot can:**\n"
-        "\U0001F50D `/ask` — Answer questions about Rob's work\n"
-        "\U0001F4CB `/search` — Find videos by topic or material\n"
-        "\U0001F3B2 `/random` — Get a random video recommendation\n"
-        "\U0001F528 `/3d` — Search Rob's 3D printable designs\n\n"
+        "\U0001F50D `/ask` \u2014 Answer questions about Rob's work\n"
+        "\U0001F4CB `/search` \u2014 Find videos by topic or material\n"
+        "\U0001F3B2 `/random` \u2014 Get a random video recommendation\n"
+        "\U0001F528 `/3d` \u2014 Search Rob's 3D printable designs\n\n"
         "**Channels archived:**\n"
         "> [@ThinkingandTinkering](https://www.youtube.com/@ThinkingandTinkering) (2,122 videos)\n"
         "> [@TnTtalktime](https://www.youtube.com/@TnTtalktime) (83 videos)\n"
@@ -279,14 +276,13 @@ async def on_message(message: discord.Message):
     if not is_dm and not is_mention:
         return
 
-    # Strip the mention and punctuation-only leftovers from the message
+    # Strip the mention and punctuation-only leftovers
     question = message.content
     if bot.user:
         question = question.replace(f"<@{bot.user.id}>", "").strip()
         question = question.replace(f"<@!{bot.user.id}>", "").strip()
 
     # Detect greetings and near-empty messages
-    import re
     cleaned = re.sub(r"[^\w\s]", "", question).lower().strip()
     GREETINGS = {"hey", "hi", "hello", "howdy", "sup", "yo", "hola", "oi", "hiya",
                  "greetings", "cheers", "heya", "cheers mate", "hey mate", "hi mate",
@@ -321,7 +317,9 @@ async def on_message(message: discord.Message):
     # Show typing indicator while processing
     async with message.channel.typing():
         try:
-            context_docs = rag.search(question)
+            context_docs = await asyncio.to_thread(
+                archive.search_videos, question, config.RAG_MAX_VIDEOS
+            )
             if not context_docs:
                 await message.reply(
                     "Hmm, I couldn't find anything in Rob's archive about that! \U0001F914 "
@@ -329,9 +327,9 @@ async def on_message(message: discord.Message):
                 )
                 return
 
-            messages_list = rag.build_messages(question, context_docs)
+            messages_list = build_messages(question, context_docs)
             answer = await llm_router.generate(messages_list)
-            videos = [{"title": d["title"], "url": d["url"]} for d in context_docs]
+            videos = [{"title": d.title, "url": d.url} for d in context_docs]
             formatted = format_response(answer, videos)
             await message.reply(formatted)
 
@@ -347,10 +345,21 @@ async def on_message(message: discord.Message):
 
 @bot.event
 async def on_ready():
+    global archive
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
-    # Load indexes
-    rag.load_indexes()
+    # Initialize archive search from the archive repo
+    chroma_dir = config.ARCHIVE_PATH / "chroma_db"
+    archive = ArchiveSearch(
+        config.ARCHIVE_PATH,
+        chroma_dir=chroma_dir if chroma_dir.exists() else None,
+    )
+    stats = archive.stats
+    log.info(
+        f"Archive loaded: {stats.total_videos} videos, "
+        f"{stats.total_3d_items} 3D designs, "
+        f"ChromaDB: {'yes' if stats.has_chromadb else 'no'}"
+    )
 
     # Sync slash commands
     try:
