@@ -207,14 +207,11 @@ class FAQBuilder:
                 "FROM interactions WHERE query_normalized != ''"
             )
             matching_interactions = []
-            raw_query_counts: dict[str, int] = {}
 
             for irow in cur2.fetchall():
                 qwords = set(irow["query_normalized"].split()) if irow["query_normalized"] else set()
                 if _jaccard(kw_set, qwords) > 0.6:
                     matching_interactions.append(irow)
-                    raw = irow["query_raw"].strip().lower()
-                    raw_query_counts[raw] = raw_query_counts.get(raw, 0) + 1
 
             if not matching_interactions:
                 continue

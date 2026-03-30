@@ -36,6 +36,4 @@ USER_COOLDOWN_SECONDS = int(os.getenv("USER_COOLDOWN_SECONDS", "10"))
 LLM_MAX_REQUESTS_PER_SECOND = float(os.getenv("LLM_MAX_REQUESTS_PER_SECOND", "0.9"))
 
 # RAG settings
-RAG_TOP_K = int(os.getenv("RAG_TOP_K", "8"))
 RAG_MAX_VIDEOS = int(os.getenv("RAG_MAX_VIDEOS", "5"))
-RAG_MIN_RELEVANCE = float(os.getenv("RAG_MIN_RELEVANCE", "0.3"))

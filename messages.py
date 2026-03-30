@@ -1,8 +1,5 @@
 """
-messages.py — Build LLM message lists from search results.
-
-Extracted from rag.py so the bot can use archive_search (shared library)
-while keeping bot-specific prompt assembly here.
+messages.py — Build LLM message lists from archive search results.
 """
 
 from personality import SYSTEM_PROMPT

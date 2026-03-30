@@ -67,7 +67,7 @@ def _now_iso() -> str:
 
 
 class LearningDB:
-    def __init__(self, db_path: "str | Path" = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str | Path = DEFAULT_DB_PATH):
         """Open/create SQLite DB, create tables if needed."""
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
