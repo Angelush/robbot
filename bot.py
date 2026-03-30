@@ -5,6 +5,7 @@ Usage:
     python bot.py
 """
 import asyncio
+import json
 import logging
 import os
 import re
@@ -32,6 +33,8 @@ from personality import (
 # Add archive repo to Python path so we can import archive_search
 sys.path.insert(0, str(config.ARCHIVE_PATH))
 from archive_search import ArchiveSearch
+from learning import LearningDB
+from faq_builder import FAQBuilder
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -58,6 +61,12 @@ _user_cooldowns: dict[int, float] = defaultdict(float)
 # Archive search instance (initialized in on_ready)
 archive: ArchiveSearch | None = None
 
+# Learning DB instance (initialized in on_ready)
+learning_db: LearningDB | None = None
+
+# FAQ builder instance (initialized in on_ready)
+faq_builder: FAQBuilder | None = None
+
 
 def check_cooldown(user_id: int) -> float | None:
     """Return seconds remaining if user is on cooldown, else None."""
@@ -67,6 +76,20 @@ def check_cooldown(user_id: int) -> float | None:
         return remaining
     _user_cooldowns[user_id] = now
     return None
+
+# ---------------------------------------------------------------------------
+# FAQ auto-rebuild helper
+# ---------------------------------------------------------------------------
+
+async def maybe_rebuild_faq():
+    """Check if FAQ rebuild is needed and run in background."""
+    try:
+        if faq_builder is not None and faq_builder.should_rebuild():
+            log.info("Triggering FAQ rebuild...")
+            await asyncio.to_thread(faq_builder.rebuild)
+            log.info("FAQ rebuild complete")
+    except Exception as e:
+        log.warning(f"FAQ rebuild failed: {e}")
 
 # ---------------------------------------------------------------------------
 # /ask — main RAG pipeline
@@ -103,6 +126,26 @@ async def ask(interaction: discord.Interaction, question: str):
     await interaction.response.defer()
 
     try:
+        # Check FAQ cache first
+        try:
+            if learning_db is not None:
+                faq_match = learning_db.get_faq_match(question)
+                if faq_match and faq_match["quality_score"] >= 0.7:
+                    learning_db.record_faq_hit(faq_match["id"])
+                    await interaction.followup.send(faq_match["response"])
+                    learning_db.log_interaction(
+                        user_id=interaction.user.id,
+                        query_raw=question,
+                        videos_used=json.loads(faq_match.get("videos") or "[]")
+                            if isinstance(faq_match.get("videos"), str)
+                            else (faq_match.get("videos") or []),
+                        response_length=len(faq_match["response"]),
+                        source="faq",
+                    )
+                    return
+        except Exception as e:
+            log.warning(f"FAQ check failed in /ask: {e}")
+
         # RAG search via shared archive library
         context_docs = await asyncio.to_thread(
             archive.search_videos, question, config.RAG_MAX_VIDEOS
@@ -124,6 +167,19 @@ async def ask(interaction: discord.Interaction, question: str):
         videos = [{"title": d.title, "url": d.url} for d in context_docs]
         formatted = format_response(answer, videos)
         await interaction.followup.send(formatted)
+
+        try:
+            if learning_db is not None:
+                learning_db.log_interaction(
+                    user_id=interaction.user.id,
+                    query_raw=question,
+                    videos_used=[d.video_id for d in context_docs],
+                    response_length=len(formatted),
+                    source="ask",
+                )
+                asyncio.create_task(maybe_rebuild_faq())
+        except Exception as e:
+            log.warning(f"Failed to log /ask interaction: {e}")
 
     except Exception as e:
         log.error(f"Error in /ask: {e}", exc_info=True)
@@ -166,6 +222,19 @@ async def search(interaction: discord.Interaction, topic: str):
         response = response[:1940] + "...\n-# RobBot"
 
     await interaction.response.send_message(response)
+
+    try:
+        if learning_db is not None:
+            learning_db.log_interaction(
+                user_id=interaction.user.id,
+                query_raw=topic,
+                videos_used=[item.id for item in results[:8]],
+                response_length=len(response),
+                source="search",
+            )
+            asyncio.create_task(maybe_rebuild_faq())
+    except Exception as e:
+        log.warning(f"Failed to log /search interaction: {e}")
 
 # ---------------------------------------------------------------------------
 # /random — random video recommendation
@@ -226,6 +295,37 @@ async def search_3d(interaction: discord.Interaction, query: str):
     lines.append("\n-# RobBot | Fan-made tribute bot")
 
     await interaction.response.send_message("\n".join(lines))
+
+# ---------------------------------------------------------------------------
+# /stats — usage statistics
+# ---------------------------------------------------------------------------
+
+@bot.tree.command(name="stats", description="RobBot usage statistics")
+async def stats(interaction: discord.Interaction):
+    try:
+        if learning_db is None:
+            await interaction.response.send_message(
+                "Learning DB is not initialised yet.", ephemeral=True
+            )
+            return
+        s = learning_db.get_stats()
+        top = "\n".join(f"> {q} ({c}x)" for q, c in s["top_topics"][:5])
+        await interaction.response.send_message(
+            f"**RobBot Stats** \U0001F4CA\n\n"
+            f"Total interactions: {s['total_interactions']}\n"
+            f"FAQ entries: {s['total_faq_entries']}\n"
+            f"FAQ hit rate: {s['faq_hit_rate']:.1%}\n"
+            f"Follow-up rate: {s['follow_up_rate']:.1%}\n\n"
+            f"**Top topics:**\n{top}\n\n"
+            f"-# RobBot | Fan-made tribute bot",
+            ephemeral=True,
+        )
+    except Exception as e:
+        log.error(f"Error in /stats: {e}", exc_info=True)
+        await interaction.response.send_message(
+            "Oops, couldn't retrieve stats right now. \U0001F527 Try again in a moment.",
+            ephemeral=True,
+        )
 
 # ---------------------------------------------------------------------------
 # /about — static info
@@ -318,6 +418,26 @@ async def on_message(message: discord.Message):
     # Show typing indicator while processing
     async with message.channel.typing():
         try:
+            # Check FAQ cache first
+            try:
+                if learning_db is not None:
+                    faq_match = learning_db.get_faq_match(question)
+                    if faq_match and faq_match["quality_score"] >= 0.7:
+                        learning_db.record_faq_hit(faq_match["id"])
+                        await message.reply(faq_match["response"])
+                        learning_db.log_interaction(
+                            user_id=message.author.id,
+                            query_raw=question,
+                            videos_used=json.loads(faq_match.get("videos") or "[]")
+                                if isinstance(faq_match.get("videos"), str)
+                                else (faq_match.get("videos") or []),
+                            response_length=len(faq_match["response"]),
+                            source="faq",
+                        )
+                        return
+            except Exception as e:
+                log.warning(f"FAQ check failed in mention handler: {e}")
+
             context_docs = await asyncio.to_thread(
                 archive.search_videos, question, config.RAG_MAX_VIDEOS
             )
@@ -334,6 +454,19 @@ async def on_message(message: discord.Message):
             formatted = format_response(answer, videos)
             await message.reply(formatted)
 
+            try:
+                if learning_db is not None:
+                    learning_db.log_interaction(
+                        user_id=message.author.id,
+                        query_raw=question,
+                        videos_used=[d.video_id for d in context_docs],
+                        response_length=len(formatted),
+                        source="mention",
+                    )
+                    asyncio.create_task(maybe_rebuild_faq())
+            except Exception as e:
+                log.warning(f"Failed to log mention interaction: {e}")
+
         except Exception as e:
             log.error(f"Error in mention handler: {e}", exc_info=True)
             await message.reply(
@@ -346,7 +479,7 @@ async def on_message(message: discord.Message):
 
 @bot.event
 async def on_ready():
-    global archive
+    global archive, learning_db, faq_builder
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
     # Initialize archive search from the archive repo
@@ -364,6 +497,11 @@ async def on_ready():
         f"{stats.total_3d_items} 3D designs, "
         f"ChromaDB: {'yes' if stats.has_chromadb else 'no'}"
     )
+
+    learning_db = LearningDB()
+    log.info(f"Learning DB: {learning_db.get_interaction_count()} interactions logged")
+
+    faq_builder = FAQBuilder(learning_db)
 
     # Sync slash commands
     try:
