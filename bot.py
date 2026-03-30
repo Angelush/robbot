@@ -336,7 +336,7 @@ async def about(interaction: discord.Interaction):
     await interaction.response.send_message(
         "**RobBot** \U0001F916\U0001F52C\n\n"
         "A fan-made tribute bot for **Robert Murray-Smith** (1965\u20132025), "
-        "a brilliant inventor, educator, and YouTuber from Scotland.\n\n"
+        "a brilliant inventor, educator, and YouTuber from Herne Bay, Kent.\n\n"
         "Robert made over 2,400 videos about graphene, batteries, supercapacitors, "
         "solar cells, 3D printing, and countless DIY science experiments. "
         "His curiosity and generosity in sharing knowledge inspired thousands.\n\n"
