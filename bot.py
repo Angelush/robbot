@@ -6,6 +6,7 @@ Usage:
 """
 import asyncio
 import logging
+import os
 import re
 import sys
 import time
@@ -349,11 +350,14 @@ async def on_ready():
     log.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
     # Initialize archive search from the archive repo
-    chroma_dir = config.ARCHIVE_PATH / "chroma_db"
-    archive = ArchiveSearch(
-        config.ARCHIVE_PATH,
-        chroma_dir=chroma_dir if chroma_dir.exists() else None,
-    )
+    # ChromaDB is optional — pass chroma_dir only if CHROMA_ENABLED is set
+    # (PyTorch/sentence-transformers can crash on some Python versions)
+    chroma_dir = None
+    if os.getenv("CHROMA_ENABLED", "").lower() in ("1", "true", "yes"):
+        candidate = config.ARCHIVE_PATH / "chroma_db"
+        if candidate.exists():
+            chroma_dir = candidate
+    archive = ArchiveSearch(config.ARCHIVE_PATH, chroma_dir=chroma_dir)
     stats = archive.stats
     log.info(
         f"Archive loaded: {stats.total_videos} videos, "
