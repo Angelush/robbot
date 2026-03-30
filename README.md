@@ -2,7 +2,7 @@
 
 A Discord bot that channels the spirit of **Robert Murray-Smith** — answering questions about his 2,400+ YouTube videos on DIY science, renewable energy, graphene, batteries, 3D printing, and more.
 
-> Built by fans, for fans. Robert Murray-Smith (1965–2025) was a beloved inventor and educator from Herne Bay, Kent, whose curiosity and generosity inspired thousands.
+> Built by fans, for fans. Robert Murray-Smith (1965–2025) was a beloved inventor and educator whose curiosity and generosity inspired thousands.
 
 ---
 
